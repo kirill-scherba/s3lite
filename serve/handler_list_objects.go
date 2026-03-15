@@ -13,6 +13,7 @@ type ListBucketResultV2 struct {
 	XMLName               xml.Name       `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResult"`
 	Name                  string         `xml:"Name"`                     // Bucket name
 	Prefix                string         `xml:"Prefix"`                   // Filter (prefix)
+	Delimiter             string         `xml:"Delimiter"`                // Filter (delimiter)
 	KeyCount              int            `xml:"KeyCount"`                 // Number of objects in response
 	MaxKeys               int            `xml:"MaxKeys"`                  // Limit
 	IsTruncated           bool           `xml:"IsTruncated"`              // Is there another page?
@@ -65,7 +66,10 @@ func (s *Server) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
 
 			// If this is a folder and we are in "ls" mode (there is a delimiter)
 			if s.buckets.buckets.IsFolder(key) {
-				commonPrefixes = append(commonPrefixes, CommonPrefix{Prefix: key})
+				// key = strings.TrimSuffix(key, "/")
+				if key != "/" {
+					commonPrefixes = append(commonPrefixes, CommonPrefix{Prefix: key})
+				}
 				continue
 			}
 
@@ -112,6 +116,7 @@ func (s *Server) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
 	resp := ListBucketResultV2{
 		Name:           bucketName,
 		Prefix:         prefix,
+		Delimiter:      delimiter,
 		KeyCount:       len(objects),
 		MaxKeys:        1000,
 		IsTruncated:    false,

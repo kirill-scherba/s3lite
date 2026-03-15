@@ -50,27 +50,40 @@ func (s *Server) putObjectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set to S3Lite
+	// Get buckets s3Lite object
 	s3Lite, err := s.buckets.get(bucketName)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		log.Error(err)
 		return
 	}
+
+	// If an empty file is received, and such a key already exists and it is
+	// NOT empty
+	if len(body) == 0 {
+		_, err := s3Lite.GetInfo(key)
+		if err == nil {
+			// Check if it's not a special s3fs request
+			// It's better to simply return 200 OK without updating the old file
+			// if it's just an attempt to "update the time"
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+	}
+
+	// Set to S3Lite
 	var inObjectInfo *s3lite.ObjectInfo
 	if uploadId != "" && partNumber != "" {
 		inObjectInfo = &s3lite.ObjectInfo{Metadata: map[string]string{
 			"uploadId": uploadId, "partNumber": partNumber,
 		}}
 	}
-	// fmt.Printf("metadata 0: %s => %v\n", key, inObjectInfo.Metadata)
 	objectInfo, err := s3Lite.Set(key, body, inObjectInfo)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		log.Error(err)
 		return
 	}
-	// fmt.Printf("Set %s => %v\n", key, objectInfo.Metadata)
 
 	// Response with ETag and status 200
 	w.Header().Set("ETag", "\""+objectInfo.Checksum+"\"")
@@ -231,7 +244,7 @@ func parsePath(r *http.Request) (bucketName, key string, err error) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	parts := strings.SplitN(path, "/", 2)
 	if len(parts) < 2 {
-		err = fmt.Errorf("invalid path")
+		err = ErrInvalidURI
 		return
 	}
 	bucketName, key = parts[0], parts[1]

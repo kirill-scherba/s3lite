@@ -69,10 +69,10 @@ func newBackets(appShort string) (b *Buckets, err error) {
 //	if err != nil {
 //			log.Fatal(err)
 //		}
-func (s *Buckets) add(name string) (err error) {
+func (b *Buckets) add(name string) (err error) {
 
 	// Check if bucket exists
-	if _, err = s.buckets.GetInfo(name); err == nil {
+	if _, err = b.buckets.GetInfo(name); err == nil {
 		err = fmt.Errorf("bucket '%s' already exists", name)
 		return
 	}
@@ -82,7 +82,7 @@ func (s *Buckets) add(name string) (err error) {
 	}
 
 	// Create new bucket
-	_, err = s.buckets.Set(name, []byte{})
+	_, err = b.buckets.Set(name, []byte{})
 
 	return
 }
@@ -108,24 +108,24 @@ func (s *Buckets) add(name string) (err error) {
 //	if err != nil {
 //			log.Fatal(err)
 //		}
-func (s *Buckets) get(bucketName string) (s3Lite *s3lite.S3Lite, err error) {
+func (b *Buckets) get(bucketName string) (s3Lite *s3lite.S3Lite, err error) {
 
 	// Get bucket info to check if it exists
-	if _, err = s.buckets.Get(bucketName); err != nil {
-		err = fmt.Errorf("bucket %s doesn't exists", bucketName)
+	if _, err = b.buckets.Get(bucketName); err != nil {
+		err = ErrNoSuchBucket
 		return
 	}
 
 	// Get config path
-	path, err := configPath(s.appShort)
+	path, err := configPath(b.appShort)
 	if err != nil {
 		return
 	}
 
 	// Get bucket from map
-	s.mut.Lock()
-	defer s.mut.Unlock()
-	s3Lite, ok := s.m[bucketName]
+	b.mut.Lock()
+	defer b.mut.Unlock()
+	s3Lite, ok := b.m[bucketName]
 	if !ok {
 		// Open new s3lite object
 		s3Lite, err = s3lite.New(path, bucketName)
@@ -133,7 +133,7 @@ func (s *Buckets) get(bucketName string) (s3Lite *s3lite.S3Lite, err error) {
 			err = fmt.Errorf("can't create bucket %s: %w", bucketName, err)
 			return
 		}
-		s.m[bucketName] = s3Lite
+		b.m[bucketName] = s3Lite
 	}
 
 	return
@@ -159,17 +159,26 @@ func (s *Buckets) get(bucketName string) (s3Lite *s3lite.S3Lite, err error) {
 //	if err != nil {
 //			log.Fatal(err)
 //		}
-func (s *Buckets) delete(name string) (err error) {
+func (b *Buckets) delete(name string) (err error) {
 
 	// Check if bucket exists
-	if _, err = s.buckets.GetInfo(name); err != nil {
-		err = fmt.Errorf("can't remove bucket %s: %w", name, err)
+	if _, err = b.buckets.GetInfo(name); err != nil {
+		err = ErrNoSuchBucket
+		return
+	}
+
+	// Check if bucket is not empty
+	bucket, err := b.get(name)
+	if err != nil {
+		return
+	}
+	if bucket.Count("") > 0 {
+		err = ErrBucketNotEmpty
 		return
 	}
 
 	// Remove bucket
-	err = s.buckets.Del(name)
-
+	err = b.buckets.Del(name)
 	return
 }
 
@@ -193,8 +202,8 @@ func (s *Buckets) delete(name string) (err error) {
 //	if err != nil {
 //			log.Fatal(err)
 //		}
-func (s *Buckets) list() (buckets []Bucket, err error) {
-	for key := range s.buckets.List("") {
+func (b *Buckets) list() (buckets []Bucket, err error) {
+	for key := range b.buckets.List("") {
 
 		// Set bucket name
 		bucket := Bucket{
@@ -203,7 +212,7 @@ func (s *Buckets) list() (buckets []Bucket, err error) {
 		}
 
 		// Set bucket creation date
-		if info, err := s.buckets.GetInfo(key); err == nil {
+		if info, err := b.buckets.GetInfo(key); err == nil {
 			bucket.CreationDate = S3Time(info.CreatedAt)
 		}
 

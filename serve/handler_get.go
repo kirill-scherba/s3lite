@@ -9,11 +9,12 @@ import (
 
 func (s *Server) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 
+	// Process error at return
 	var err error
 	defer func() {
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			log.Error(err)
+			s.WriteError(w, r, err)
+			log.Debug(err)
 		}
 	}()
 
@@ -40,7 +41,6 @@ func (s *Server) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Get the range header
 	rangeHeader := r.Header.Get("Range")
-
 	if rangeHeader != "" {
 		log.Infof("Client requests a specific range: %s\n", rangeHeader)
 	} else {
@@ -56,10 +56,12 @@ func (s *Server) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 	// Get S3Lite object for bucket
 	s3Lite, err := s.buckets.get(bucketName)
 	if err != nil {
+		err = ErrNoSuchBucket
 		return
 	}
 	info, err := s3Lite.GetInfo(key)
 	if err != nil {
+		err = ErrNoSuchKey
 		return
 	}
 	contentType := info.ContentType
@@ -67,16 +69,22 @@ func (s *Server) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Set necessary headers
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", contentLength))
-	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("ETag", "\""+info.Checksum+"\"")
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Last-Modified", info.ModifiedAt.UTC().Format(http.TimeFormat))
+	w.Header().Set("Content-Type", contentType)
 
 	// Write the headers and content of the key
 	// w.WriteHeader(http.StatusOK)
 
 	// Skip writing content if this is a HEAD request
 	if r.Method == "HEAD" {
+		if info.IsFolder && !s3Lite.IsFolderWithFiles(key) {
+			// w.WriteHeader(http.StatusNoContent)
+			s.WriteError(w, r, ErrNoSuchKey)
+			return
+		}
+
 		w.WriteHeader(http.StatusOK)
 		return
 	}

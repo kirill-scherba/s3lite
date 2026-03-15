@@ -33,27 +33,6 @@ func (t S3Time) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	return e.EncodeElement(s, start)
 }
 
-type ErrorResponse struct {
-	XMLName   xml.Name `xml:"Error"`
-	Code      string   `xml:"Code"`      // Example: NoSuchBucket
-	Message   string   `xml:"Message"`   // Human-readable message
-	Resource  string   `xml:"Resource"`  // Path to the resource
-	RequestID string   `xml:"RequestId"` // Request UUID
-}
-
-func WriteError(w http.ResponseWriter, code string, message string, 
-	resource string, status int) {
-
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(status)
-	xml.NewEncoder(w).Encode(ErrorResponse{
-		Code:      code,
-		Message:   message,
-		Resource:  resource,
-		RequestID: "SEND-HELP-123",
-	})
-}
-
 func (s *Server) listBucketsHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 

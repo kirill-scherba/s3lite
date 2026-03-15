@@ -176,6 +176,7 @@ func (s *S3Lite) GetInfo(key string) (objectInfo *ObjectInfo, err error) {
 	// Check if key object is folder
 	if s.IsFolder(key) {
 		objectInfo.IsFolder = true
+		objectInfo.ContentType = "application/x-directory"
 		return
 	}
 
@@ -252,8 +253,6 @@ func (s *S3Lite) SetInfo(key string, objectInfo *ObjectInfo) (
 //		log.Fatal(err)
 //	}
 func (s *S3Lite) Del(key string) (err error) {
-
-	fmt.Printf("Del %s\n", key)
 
 	// Delete object
 	err = s.db.Update(func(txn *badger.Txn) error {
@@ -352,10 +351,28 @@ func (s *S3Lite) List(prefix string) iter.Seq[string] {
 	}
 }
 
+// Count returns the number of keys with given prefix.
+func (s *S3Lite) Count(prefix string) (count int) {
+	for range s.List(prefix) {
+		count++
+	}
+	return
+}
+
 // IsFolder returns true if key is a folder.
 func (s *S3Lite) IsFolder(key string) bool {
 	l := len(key)
 	return l > 0 && key[l-1] == '/'
+}
+
+// IsFolderWithFiles returns true if key is a folder and has files.
+func (s *S3Lite) IsFolderWithFiles(key string) bool {
+	if s.IsFolder(key) {
+		for range s.List(key) {
+			return true
+		}
+	}
+	return false
 }
 
 // Dir returns the directory of the given key.

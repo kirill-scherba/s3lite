@@ -24,6 +24,13 @@ func extractAccessKey(authHeader string) string {
 // authMiddleware provides authentication for all incoming requests.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		// Skip authentication for list-type=2 TEMPORARY requests to check in curl
+		// if r.URL.Query().Get("list-type") == "2" {
+		// 	next.ServeHTTP(w, r) 
+		// 	return
+		// }
+
 		// Get Authorization header
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
