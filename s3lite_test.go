@@ -5,7 +5,10 @@
 package s3lite
 
 import (
+	"fmt"
+	"sync"
 	"testing"
+	"time"
 )
 
 func init() {
@@ -44,7 +47,7 @@ func TestS3(t *testing.T) {
 
 		for _, k := range keys {
 			// Set to s3
-			err := s3.Set(k.key, k.value)
+			_, err := s3.Set(k.key, k.value)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -99,7 +102,7 @@ func TestS3(t *testing.T) {
 		)
 		for _, k := range keys {
 			// Set to s3
-			err := s3.Set(k.key, k.value)
+			_, err := s3.Set(k.key, k.value)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -111,7 +114,9 @@ func TestS3(t *testing.T) {
 		// List root
 		t.Logf(color, "List root:", "")
 		for key := range s3.List("") {
-			t.Logf("root key: %s", key)
+			objectInfo, _ := s3.GetInfo(key)
+			t.Logf("root key: '%s' %d bytes %s", key, objectInfo.ContentLength,
+				objectInfo.Checksum)
 		}
 
 		// List folder
@@ -139,6 +144,61 @@ func TestS3(t *testing.T) {
 		dir = s3.Dir("key1")
 		t.Logf("dir: %s", dir)
 		require(t, "", dir)
+	})
+
+	t.Run("Multiple runs", func(t *testing.T) {
+		wg := sync.WaitGroup{}
+
+		const numKeys = 50000
+		start := time.Now()
+
+		// Set keys
+		for i := range numKeys {
+			wg.Go(func() {
+				key := fmt.Sprintf("key-multiple-%d", i)
+				// Set to s3
+				_, err := s3.Set(key, []byte(key))
+				if err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+
+		// Get keys
+		for i := range numKeys {
+			wg.Go(func() {
+				key := fmt.Sprintf("key-multiple-%d", i)
+
+				// Get info
+				for {
+					_, err := s3.GetInfo(key)
+					if err != nil {
+						if err == ErrKeyNotFound {
+							time.Sleep(250 * time.Millisecond)
+							continue
+						}
+						t.Fatal(err)
+					}
+					// t.Logf("%d %s", i+1, info.Checksum)
+					break
+				}
+
+				// Get from s3
+				data, err := s3.Get(key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				require(t, key, string(data))
+			})
+		}
+
+		wg.Wait()
+
+		// Calculate number keys per second
+		elapsed := time.Since(start)
+		keysPerSecond := float64(numKeys*2) / elapsed.Seconds()
+		t.Logf("multiple runs done, keys: %d, keys per second: %.2f", numKeys,
+			keysPerSecond)
 	})
 }
 
