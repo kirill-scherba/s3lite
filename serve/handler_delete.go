@@ -39,8 +39,8 @@ func (s *Server) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if this key is folder
-	if info.IsFolder {
+	// Check if this key is folder with files then skip it
+	if info.IsFolder && s3Lite.IsFolderWithFiles(key) {
 		// err = ErrKeyIsFolder
 		w.WriteHeader(http.StatusNoContent)
 		return

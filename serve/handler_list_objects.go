@@ -4,9 +4,11 @@ import (
 	"encoding/xml"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/kirill-scherba/log"
+	"github.com/kirill-scherba/s3lite"
 )
 
 type ListBucketResultV2 struct {
@@ -49,19 +51,23 @@ func (s *Server) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
 	delimiter := query.Get("delimiter")
 	pretty := query.Get("pretty") == "true"
 	recursive := delimiter == ""
-
+	maxKeys, _ := strconv.Atoi(query.Get("max-keys"))
+	// marker := query.Get("marker")
 	// listType := query.Get("list-type") // Should be "2"
 
 	// Get objects from S3Lite
 	var objects []Object
 	var commonPrefixes []CommonPrefix
+	var keysToRemove = make(map[string]struct{})
 	s3Lite, err := s.buckets.get(bucketName)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		log.Error(err)
 		return
 	}
-	list := func(prefix string) {
+	list := func(prefix string, maxKeys int) {
+		var i int
+
 		for key := range s3Lite.List(prefix) {
 
 			// If this is a folder and we are in "ls" mode (there is a delimiter)
@@ -81,10 +87,19 @@ func (s *Server) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Check if this is a multipart upload part
-			if _, ok := info.Metadata["uploadId"]; ok {
-				if _, ok := info.Metadata["partNumber"]; ok {
-					continue
+			uploadId := info.Metadata["uploadId"]
+			partNumber := info.Metadata["partNumber"]
+			if uploadId != "" && partNumber != "" {
+
+				// Get parent key for multipart upload part and check parent info
+				parentKey := strings.TrimSuffix(key, "."+uploadId+"."+partNumber)
+				info, err = s3Lite.GetInfo(parentKey)
+				if !(err == nil && info.Metadata["uploadId"] != "") {
+					log.Debugf("\033[31mLost multipart upload part: %s\033[0m", key)
+					keysToRemove[key] = struct{}{}
 				}
+
+				continue
 			}
 
 			// Append object to list
@@ -95,14 +110,22 @@ func (s *Server) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
 				Size:         info.ContentLength,
 				StorageClass: "STANDARD",
 			})
+
+			// Check max keys
+			i++
+			if maxKeys > 0 && i >= maxKeys {
+				break
+			}
 		}
+
+		// s.removeLoastMultiParts(bucketName, prefix)
 	}
-	list(prefix)
+	list(prefix, maxKeys)
 
 	// Process common prefixes for recursive mode
 	var sortObjects bool
 	for recursive && len(commonPrefixes) > 0 {
-		list(commonPrefixes[0].Prefix)
+		list(commonPrefixes[0].Prefix, maxKeys)
 		commonPrefixes = commonPrefixes[1:]
 	}
 	// Sort objects slice
@@ -124,6 +147,9 @@ func (s *Server) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
 		CommonPrefixes: commonPrefixes,
 	}
 
+	// Remove lost multipart keys
+	removeKeysMap(s3Lite, keysToRemove)
+
 	// Write xml response
 	xmlEncode(w, pretty, resp)
 }
@@ -142,4 +168,13 @@ func xmlEncode(w http.ResponseWriter, pretty bool, resp any) error {
 	}
 
 	return enc.Encode(resp)
+}
+
+func removeKeysMap(s3Lite *s3lite.S3Lite, keysMap map[string]struct{}) (err error) {
+	var keys []string
+	for key := range keysMap {
+		keys = append(keys, key)
+	}
+	s3Lite.Del(keys...)
+	return
 }

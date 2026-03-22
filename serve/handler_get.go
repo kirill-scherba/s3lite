@@ -74,17 +74,8 @@ func (s *Server) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Last-Modified", info.ModifiedAt.UTC().Format(http.TimeFormat))
 	w.Header().Set("Content-Type", contentType)
 
-	// Write the headers and content of the key
-	// w.WriteHeader(http.StatusOK)
-
 	// Skip writing content if this is a HEAD request
 	if r.Method == "HEAD" {
-		if info.IsFolder && !s3Lite.IsFolderWithFiles(key) {
-			// w.WriteHeader(http.StatusNoContent)
-			s.WriteError(w, r, ErrNoSuchKey)
-			return
-		}
-
 		w.WriteHeader(http.StatusOK)
 		return
 	}

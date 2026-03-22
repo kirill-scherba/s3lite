@@ -103,8 +103,23 @@ func (s *Server) initiateMultipartHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Get buckets s3Lite object
+	s3Lite, err := s.buckets.get(bucket)
+	if err != nil {
+		return
+	}
+
 	// Generate random upload UUID
 	uploadID := uuid.New().String()
+
+	// Get object info if exists
+	objectInfo, err := s3Lite.GetInfo(key)
+	if err == nil {
+		id := objectInfo.Metadata["uploadId"]
+		if id != "" {
+			uploadID = id
+		}
+	}
 
 	resp := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
     <InitiateMultipartUploadResult>
@@ -182,14 +197,10 @@ func (s *Server) mergeParts(uploadId string, parts []Part, bucket, key string) (
 
 	// Prepare data
 	var сontentLength int64
-	outPath := "/" + bucket + "/" + key
-
-	fmt.Printf("Merge %d parts to %s\n", len(parts), outPath)
 
 	// Range parts and combine to data
 	for _, p := range parts {
 		partKey := partKey(key, uploadId, p.PartNumber)
-		fmt.Printf("Part %d: %s => %s\n", p.PartNumber, p.ETag, partKey)
 
 		// Get part info from S3Lite
 		info, err := s3Lite.GetInfo(partKey)

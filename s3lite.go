@@ -173,13 +173,6 @@ func (s *S3Lite) GetInfo(key string) (objectInfo *ObjectInfo, err error) {
 	// Init object info
 	objectInfo = &ObjectInfo{}
 
-	// Check if key object is folder
-	if s.IsFolder(key) {
-		objectInfo.IsFolder = true
-		objectInfo.ContentType = "application/x-directory"
-		return
-	}
-
 	// Get object info
 	err = s.dbInfo.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(key))
@@ -196,6 +189,16 @@ func (s *S3Lite) GetInfo(key string) (objectInfo *ObjectInfo, err error) {
 
 		return err
 	})
+
+	// Check if key object is folder
+	if err == nil {
+		if s.IsFolder(key) {
+			objectInfo.IsFolder = true
+			objectInfo.ContentType = "application/x-directory"
+			return
+		}
+	}
+
 	return
 }
 
@@ -252,18 +255,28 @@ func (s *S3Lite) SetInfo(key string, objectInfo *ObjectInfo) (
 //	if err != nil {
 //		log.Fatal(err)
 //	}
-func (s *S3Lite) Del(key string) (err error) {
+func (s *S3Lite) Del(keys ...string) (err error) {
 
 	// Delete object
 	err = s.db.Update(func(txn *badger.Txn) error {
-		err := txn.Delete([]byte(key))
-		return err
+		for _, key := range keys {
+			err := txn.Delete([]byte(key))
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 
 	// Delete object info
 	err = s.dbInfo.Update(func(txn *badger.Txn) error {
-		err := txn.Delete([]byte(key))
-		return err
+		for _, key := range keys {
+			err := txn.Delete([]byte(key))
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 
 	return
@@ -317,9 +330,14 @@ func (s *S3Lite) List(prefix string) iter.Seq[string] {
 				// Get key
 				key := string(iterator.Item().KeyCopy(nil))
 
-				// Check if key has correct number of folders
+				// Skip self folder
 				var skip bool
-				if strings.Count(key, "/") > numFoldersInPrefix {
+				if key == prefix || key == prefix+"/" {
+					skip = true
+				}
+
+				// Check if key has correct number of folders
+				if !skip && strings.Count(key, "/") > numFoldersInPrefix {
 					// Split by folders
 					folders := strings.Split(key, "/")
 
