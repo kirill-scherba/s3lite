@@ -13,7 +13,7 @@ type Buckets struct {
 	appShort string                    // Application short name
 	buckets  *s3lite.S3Lite            // Buckets S3Lite instance with all buckets info
 	m        map[string]*s3lite.S3Lite // Buckets map
-	mut      sync.RWMutex
+	mut      sync.RWMutex              // Buckets map mutex
 }
 
 // newBackets creates a new Buckets object.

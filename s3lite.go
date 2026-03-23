@@ -311,9 +311,14 @@ func (s *S3Lite) List(prefix string) iter.Seq[string] {
 
 		s.db.View(func(txn *badger.Txn) (err error) {
 
-			// Create new iterator
-			iterator := txn.NewIterator(badger.DefaultIteratorOptions)
-			defer iterator.Close()
+			// Iterator options
+			opts := badger.DefaultIteratorOptions
+			opts.PrefetchValues = false
+			opts.PrefetchSize = 1000
+
+			// Create new it
+			it := txn.NewIterator(opts)
+			defer it.Close()
 
 			// Calculate number of folders in prefix
 			numFoldersInPrefix := strings.Count(prefix, "/")
@@ -325,10 +330,10 @@ func (s *S3Lite) List(prefix string) iter.Seq[string] {
 			var subfolders = make(map[string]struct{})
 
 			// Iterate over keys with prefix
-			for iterator.Seek([]byte(prefix)); iterator.ValidForPrefix([]byte(prefix)); {
+			for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
 
 				// Get key
-				key := string(iterator.Item().KeyCopy(nil))
+				key := string(it.Item().KeyCopy(nil))
 
 				// Skip self folder
 				var skip bool
@@ -354,12 +359,6 @@ func (s *S3Lite) List(prefix string) iter.Seq[string] {
 
 				// Valid key found if not skipped, sending to yield function
 				if !skip && !yield(key) {
-					break
-				}
-
-				// Get next key
-				iterator.Next()
-				if !iterator.Valid() {
 					break
 				}
 			}

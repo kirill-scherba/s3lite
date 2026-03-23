@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/kirill-scherba/log"
 	"github.com/kirill-scherba/s3lite"
@@ -57,6 +58,7 @@ func (s *Server) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Get objects from S3Lite
 	var objects []Object
+	var objectsMut sync.Mutex
 	var commonPrefixes []CommonPrefix
 	var keysToRemove = make(map[string]struct{})
 	s3Lite, err := s.buckets.get(bucketName)
@@ -68,48 +70,54 @@ func (s *Server) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
 	list := func(prefix string, maxKeys int) {
 		var i int
 
+		var wg sync.WaitGroup
 		for key := range s3Lite.List(prefix) {
 
 			// If this is a folder and we are in "ls" mode (there is a delimiter)
-			if s.buckets.buckets.IsFolder(key) {
-				// key = strings.TrimSuffix(key, "/")
+			if s3Lite.IsFolder(key) {
 				if key != "/" {
 					commonPrefixes = append(commonPrefixes, CommonPrefix{Prefix: key})
 				}
 				continue
 			}
 
-			// Get object info
-			info, err := s3Lite.GetInfo(key)
-			if err != nil {
-				log.Errorf("key: '%s', err: %v", key, err)
-				continue
-			}
-
-			// Check if this is a multipart upload part
-			uploadId := info.Metadata["uploadId"]
-			partNumber := info.Metadata["partNumber"]
-			if uploadId != "" && partNumber != "" {
-
-				// Get parent key for multipart upload part and check parent info
-				parentKey := strings.TrimSuffix(key, "."+uploadId+"."+partNumber)
-				info, err = s3Lite.GetInfo(parentKey)
-				if !(err == nil && info.Metadata["uploadId"] != "") {
-					log.Debugf("\033[31mLost multipart upload part: %s\033[0m", key)
-					keysToRemove[key] = struct{}{}
+			// wg.Go(
+			func() {
+				// Get object info
+				info, err := s3Lite.GetInfo(key)
+				if err != nil {
+					log.Errorf("key: '%s', err: %v", key, err)
+					return // continue
 				}
 
-				continue
-			}
+				// Check if this is a multipart upload part
+				uploadId := info.Metadata["uploadId"]
+				partNumber := info.Metadata["partNumber"]
+				if uploadId != "" && partNumber != "" {
 
-			// Append object to list
-			objects = append(objects, Object{
-				Key:          key,
-				LastModified: S3Time(info.ModifiedAt),
-				ETag:         "\"" + info.Checksum + "\"",
-				Size:         info.ContentLength,
-				StorageClass: "STANDARD",
-			})
+					// Get parent key for multipart upload part and check parent info
+					parentKey := strings.TrimSuffix(key, "."+uploadId+"."+partNumber)
+					info, err = s3Lite.GetInfo(parentKey)
+					if !(err == nil && info.Metadata["uploadId"] != "") {
+						log.Debugf("\033[31mLost multipart upload part: %s\033[0m", key)
+						keysToRemove[key] = struct{}{}
+					}
+
+					return // continue
+				}
+
+				// Append object to list
+				objectsMut.Lock()
+				defer objectsMut.Unlock()
+				objects = append(objects, Object{
+					Key:          key,
+					LastModified: S3Time(info.ModifiedAt),
+					ETag:         "\"" + info.Checksum + "\"",
+					Size:         info.ContentLength,
+					StorageClass: "STANDARD",
+				})
+			}()
+			// )
 
 			// Check max keys
 			i++
@@ -117,8 +125,7 @@ func (s *Server) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-
-		// s.removeLoastMultiParts(bucketName, prefix)
+		wg.Wait()
 	}
 	list(prefix, maxKeys)
 

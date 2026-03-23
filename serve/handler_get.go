@@ -86,4 +86,5 @@ func (s *Server) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeContent(w, r, key, info.ModifiedAt, reader)
+	reader.Close()
 }

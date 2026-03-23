@@ -90,7 +90,7 @@ func (s *Server) putObjectHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// POST /bucket/key?uploads
+// initiateMultipartHandler initiate multipart upload at POST /bucket/key?uploads
 func (s *Server) initiateMultipartHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Log request
@@ -186,6 +186,7 @@ func (s *Server) completeMultipartHandler(w http.ResponseWriter, r *http.Request
 	w.Write([]byte(resp))
 }
 
+// mergeParts merge parts to single file.
 func (s *Server) mergeParts(uploadId string, parts []Part, bucket, key string) (
 	objectInfo *s3lite.ObjectInfo, err error) {
 
@@ -213,7 +214,7 @@ func (s *Server) mergeParts(uploadId string, parts []Part, bucket, key string) (
 	// Save data to S3Lite
 	inObjectInfo := &s3lite.ObjectInfo{
 		ContentLength: сontentLength,
-		Checksum:      сalculateMultipartETag(parts),
+		Checksum:      calculateMultipartETag(parts),
 		Metadata: map[string]string{
 			"uploadId": uploadId, "numParts": fmt.Sprintf("%d", len(parts)),
 		},
@@ -231,25 +232,27 @@ func (s *Server) mergeParts(uploadId string, parts []Part, bucket, key string) (
 	return
 }
 
-func сalculateMultipartETag(parts []Part) string {
+// calculateMultipartETag calculates Multipart ETag.
+func calculateMultipartETag(parts []Part) string {
 	var combinedBinaryMD5 []byte
 
 	for _, p := range parts {
-		// Удаляем кавычки, если они есть
+		// Remove quotes if they exist
 		cleanETag := strings.ReplaceAll(p.ETag, `"`, "")
 
-		// Переводим HEX-строку (хеш части) в бинарный вид
+		// Convert HEX string (hash part) to binary
 		binaryTag, _ := hex.DecodeString(cleanETag)
 		combinedBinaryMD5 = append(combinedBinaryMD5, binaryTag...)
 	}
 
-	// Считаем MD5 от склеенных байтов
+	// Calculate MD5 of combined bytes
 	finalHash := md5.Sum(combinedBinaryMD5)
 
-	// Формируем финальную строку: hex(hash)-N
+	// Form final string: hex(hash)-N
 	return fmt.Sprintf(`"%x-%d"`, finalHash, len(parts))
 }
 
+// parsePath parse path: /bucket/key from request.
 func parsePath(r *http.Request) (bucketName, key string, err error) {
 	// Parse path: /bucket/key
 	path := strings.TrimPrefix(r.URL.Path, "/")

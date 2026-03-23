@@ -5,16 +5,19 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/kirill-scherba/s3lite"
 )
 
 type PartsReader struct {
-	key           string         // Key
-	s3Lite        *s3lite.S3Lite // S3Lite object
-	parts         []PartMeta     // List of part metadata (key and size of each part)
-	contentLength int64          // Count of bytes (size of file)
-	offset        int64          // Current offset (cursor position in file)
+	id            uint64
+	key           string            // Key
+	s3Lite        *s3lite.S3Lite    // S3Lite object
+	parts         []PartMeta        // List of part metadata (key and size of each part)
+	contentLength int64             // Count of bytes (size of file)
+	offset        int64             // Current offset (cursor position in file)
+	partsCached   map[string][]byte // Cache parts data
 }
 
 // PartMeta struct
@@ -22,6 +25,8 @@ type PartMeta struct {
 	Key  string
 	Size int64
 }
+
+var partsReaderId atomic.Uint64
 
 // newPartsReader creates a new DBPartsReader object from the given S3Lite and key.
 //
@@ -49,11 +54,14 @@ type PartMeta struct {
 func newPartsReader(s3Lite *s3lite.S3Lite, key string) (
 	r *PartsReader, err error) {
 
+	id := partsReaderId.Add(1)
+
 	// Create DBPartsReader object
 	r = &PartsReader{
-		// bucket: bucketName,
-		key:    key,
-		offset: 0,
+		id:          id,
+		key:         key,
+		offset:      0,
+		partsCached: make(map[string][]byte),
 	}
 
 	// Set S3Lite object
@@ -103,7 +111,7 @@ func (r *PartsReader) Read(p []byte) (n int, err error) {
 		// Check if we need to read this part
 		if r.offset < currentOffset+partSize {
 			// Read part
-			data, err := r.s3Lite.Get(part.Key)
+			data, err := r.Get(part.Key)
 			if err != nil {
 				return 0, err
 			}
@@ -118,6 +126,24 @@ func (r *PartsReader) Read(p []byte) (n int, err error) {
 		currentOffset += partSize
 	}
 	return 0, io.EOF
+}
+
+func (r *PartsReader) Get(key string) ([]byte, error) {
+
+	// Get from cache
+	if data, ok := r.partsCached[key]; ok {
+		return data, nil
+	}
+
+	// Get from S3Lite
+	data, err := r.s3Lite.Get(key)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add to cache and return
+	r.partsCached[key] = data
+	return data, nil
 }
 
 // Seek realizes io.Seeker (allows to set cursor position in file)
@@ -143,9 +169,8 @@ func (r *PartsReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 // Close the DBPartsReader
-func (r *PartsReader) Close() error { 
-	r.s3Lite.Close()
-	return nil 
+func (r *PartsReader) Close() error {
+	return nil
 }
 
 // getMultipadUploadInfo retrieves multipart upload information from the given keyInfo.
