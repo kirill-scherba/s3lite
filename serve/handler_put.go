@@ -82,7 +82,7 @@ func (s *Server) putObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	// If an empty content is received
 	if len(body) == 0 {
-		log.Debugf("%s empty body\n", r.Method)
+		log.Debugf("%s empty body, url: %s\n", r.Method, r.URL)
 
 		// Get info
 		info, errInfo := s3Lite.GetInfo(key)
@@ -93,6 +93,14 @@ func (s *Server) putObjectHandler(w http.ResponseWriter, r *http.Request) {
 		// Set metadata if empty
 		if info.Metadata == nil {
 			info.Metadata = map[string]string{}
+		}
+
+		// Send response for MultipartUpload part and empty body
+		if uploadId != "" {
+			etag := info.Checksum // etag from empty body: "d41d8cd98f00b204e9800998ecf8427e"
+			log.Debugf("Send MultipartUpload part result, url: %s, etag: %s, empty body request", r.URL, etag)
+			copyPartResult(w, etag)
+			return
 		}
 
 		// Set metadata to info and update it
@@ -120,16 +128,8 @@ func (s *Server) putObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Send response for request MultipartUpload with ?uploads= and empty body
 		if uploads {
-			log.Debugf("Send MultipartUpload result, empty body request")
+			log.Debugf("Send MultipartUpload result, empty body request, url: %s", r.URL)
 			initiateMultipartUploadResult(w, bucketName, key, info.Metadata["uploadId"])
-			return
-		}
-
-		// Send response for MultipartUpload part and empty body
-		if uploadId != "" {
-			etag := info.Checksum
-			log.Debugf("Send MultipartUpload part result, etag: %s, empty body request", etag)
-			copyPartResult(w, etag)
 			return
 		}
 
@@ -270,17 +270,22 @@ func (s *Server) completeMultipartHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	log.Debugf("CompleteMultipartUpload: %v", completeReq)
+
 	// Merge parts to single file
-	ObjectInfo, err := s.mergeParts(uploadId, completeReq.Parts, bucket, key)
-	if err != nil {
-		http.Error(w, "Merge failed", 500)
-		return
+	var objectInfo = &s3lite.ObjectInfo{}
+	if len(completeReq.Parts) > 1 {
+		objectInfo, err = s.mergeParts(uploadId, completeReq.Parts, bucket, key)
+		if err != nil {
+			http.Error(w, "Merge failed", 500)
+			return
+		}
 	}
 
 	// Make response
 	// ETag of the final file in S3 for Multipart is usually "hexdigest-checksum-N",
 	// where N is the number of parts.
-	finalETag := fmt.Sprintf(`"%s"`, ObjectInfo.Checksum)
+	finalETag := fmt.Sprintf(`"%s"`, objectInfo.Checksum)
 	resp := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
     <CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
       <Location>http://%s%s</Location>
