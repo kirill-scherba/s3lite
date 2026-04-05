@@ -58,7 +58,7 @@ func New(appShort, address, domain string) (s *Server, err error) {
 
 	// Register HTTP handlers
 	mux.HandleFunc(patternVersion, handleVersion)
-	mux.Handle(patternListBuckets, s.authMiddleware(s.listBucketsHandler()))
+	mux.Handle(patternListBuckets, s.authMiddleware(s.routeHandler()))
 
 	// Start HTTP server
 	go func() {

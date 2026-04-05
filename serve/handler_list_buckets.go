@@ -33,53 +33,26 @@ func (t S3Time) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 	return e.EncodeElement(s, start)
 }
 
-func (s *Server) listBucketsHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) listBucketsHandler(w http.ResponseWriter, r *http.Request) {
 
-		// Trim leading and trailing slashes
-		path := strings.Trim(r.URL.Path, "/")
+	// Log request
+	log.Infof("ListBucketsHandler %s %s", r.Method, r.URL)
 
-		// Split the path into parts
-		if path != "" {
-			parts := strings.Split(path, "/")
-			if len(parts) == 1 {
-				// Request of the form /bucket1/ — return a list of files
-				if r.Method == http.MethodPut {
-					s.addBucketHandler(w, r)
-					return
-				}
-				if r.Method == http.MethodDelete {
-					s.deleteBucketHandler(w, r)
-					return
-				}
-				s.listObjectsHandler(w, r)
-				return
-			}
+	// Get parameters
+	query := r.URL.Query()
+	pretty := query.Get("pretty") == "true"
 
-			// Request of the form /bucket1/sub1/file.txt — work with the object
-			s.getObjectHandler(w, r)
-			return
-		}
+	// Get buckets list
+	b, _ := s.buckets.list()
 
-		// Log request
-		log.Infof("ListBucketsHandler %s %s", r.Method, r.URL)
+	// Create response
+	resp := ListAllMyBucketsResult{
+		Owner:   Owner{ID: "scherba-001", DisplayName: "Scherba"},
+		Buckets: b,
+	}
 
-		// Get parameters
-		query := r.URL.Query()
-		pretty := query.Get("pretty") == "true"
-
-		// Get buckets list
-		b, _ := s.buckets.list()
-
-		// Create response
-		resp := ListAllMyBucketsResult{
-			Owner:   Owner{ID: "scherba-001", DisplayName: "Scherba"},
-			Buckets: b,
-		}
-
-		// Write xml response
-		xmlEncode(w, pretty, resp)
-	})
+	// Write xml response
+	xmlEncode(w, pretty, resp)
 }
 
 func (s *Server) addBucketHandler(w http.ResponseWriter, r *http.Request) {
@@ -122,4 +95,20 @@ func (s *Server) deleteBucketHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
 	w.Header().Set("Content-Length", "0")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) checkBucketHandler(w http.ResponseWriter, r *http.Request) {
+	// Log request
+	log.Infof("CheckBucketHandler %s %s", r.Method, r.URL)
+
+	// Trim leading and trailing slashes
+	bucket := strings.Trim(r.URL.Path, "/")
+
+	// Get bucket and return Status on error
+	if _, err := s.buckets.get(bucket); err != nil {
+		s.WriteError(w, r, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }

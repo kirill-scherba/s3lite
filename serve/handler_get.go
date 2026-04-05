@@ -10,29 +10,18 @@ import (
 func (s *Server) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Process error at return
+	var bucketName, key string
 	var err error
 	defer func() {
 		if err != nil {
 			s.WriteError(w, r, err)
-			log.Debug(err)
+			log.Debugf("Get key %s error: %s", key, err)
 		}
 	}()
 
 	// Check multipart upload
-	if r.URL.Query().Has("uploads") {
+	if r.URL.Query().Has("uploads") && r.Header.Get("X-Amz-Metadata-Directive") == "" {
 		s.initiateMultipartHandler(w, r)
-		return
-	}
-
-	// Check method is "PUT" or "POST" and call PutObjectHandler instead
-	if r.Method == http.MethodPut || r.Method == http.MethodPost {
-		s.putObjectHandler(w, r)
-		return
-	}
-
-	// Check method is "DELETE" and call DeleteObjectHandler instead
-	if r.Method == http.MethodDelete {
-		s.deleteObjectHandler(w, r)
 		return
 	}
 
@@ -42,13 +31,14 @@ func (s *Server) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 	// Get the range header
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
-		log.Infof("Client requests a specific range: %s\n", rangeHeader)
+		log.Debugf("Client requests a specific range: %s, for key: %s\n",
+			rangeHeader, r.URL.Path)
 	} else {
 		// log.Info("Client requests the entire file")
 	}
 
 	// Parse path: /bucket1/key1
-	bucketName, key, err := parsePath(r)
+	bucketName, key, err = parsePath(r)
 	if err != nil {
 		return
 	}
@@ -68,11 +58,16 @@ func (s *Server) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 	contentLength := info.ContentLength
 
 	// Set necessary headers
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", contentLength))
 	w.Header().Set("ETag", "\""+info.Checksum+"\"")
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Last-Modified", info.ModifiedAt.UTC().Format(http.TimeFormat))
-	w.Header().Set("Content-Type", contentType)
+
+	// Set metadata to headers
+	for h, v := range info.Metadata {
+		w.Header().Set(h, v)
+	}
 
 	// Skip writing content if this is a HEAD request
 	if r.Method == "HEAD" {

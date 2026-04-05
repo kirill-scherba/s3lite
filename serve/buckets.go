@@ -116,6 +116,8 @@ func (b *Buckets) get(bucketName string) (s3Lite *s3lite.S3Lite, err error) {
 		return
 	}
 
+	// TODO: there may be another error ErrAccessDenied with http.StatusForbidden
+
 	// Get config path
 	path, err := configPath(b.appShort)
 	if err != nil {
