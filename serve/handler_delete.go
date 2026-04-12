@@ -6,6 +6,17 @@ import (
 	"github.com/kirill-scherba/log"
 )
 
+// deleteObjectHandler delete object from S3Lite storage.
+// It will parse the path, get S3Lite object from the bucket,
+// check if the object with the same key already exists,
+// and delete it from S3Lite.
+// If the object is a folder with files, it will skip it.
+// If the object is a multipart upload, it will delete all parts.
+// If the object does not exist, it will return ErrNoSuchKey.
+// If the object is a folder, it will return ErrKeyIsFolder.
+// If the object is a multipart upload and one of the parts does not exist,
+// it will return ErrInvalidQuery.
+// At the end, it will write status 204 No Content to the http client.
 func (s *Server) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Process error at return

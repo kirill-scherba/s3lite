@@ -7,6 +7,17 @@ import (
 	"github.com/kirill-scherba/log"
 )
 
+// getObjectHandler is a handler for GET /bucket/key requests. It processes
+// multipart upload initialization and completion, and handles normal GET
+// requests. It returns an error if the specified bucket does not exist,
+// or if the specified key does not exist.
+//
+// The handler logs the request, parses the path, gets the S3Lite object for
+// the bucket, gets the object info, sets the necessary headers,
+// and serves the content. It also sets the metadata to headers.
+//
+// If the request is a HEAD request, the handler just writes the headers
+// and does not serve the content.
 func (s *Server) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Process error at return

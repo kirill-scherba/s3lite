@@ -10,6 +10,7 @@ import (
 	"github.com/kirill-scherba/s3lite"
 )
 
+// PartsReader struct holds information about a multipart upload
 type PartsReader struct {
 	id            uint64
 	key           string            // Key
@@ -26,6 +27,7 @@ type PartMeta struct {
 	Size int64
 }
 
+// partsReaderId is used to generate unique IDs for DBPartsReader objects
 var partsReaderId atomic.Uint64
 
 // newPartsReader creates a new DBPartsReader object from the given S3Lite and key.
@@ -128,6 +130,15 @@ func (r *PartsReader) Read(p []byte) (n int, err error) {
 	return 0, io.EOF
 }
 
+// Get retrieves the data for the given key from the cache or from S3Lite if it's not in the cache.
+// If the key is not found in the cache, it is retrieved from S3Lite and added to the cache.
+// If the key is not found in S3Lite, an error is returned.
+// Parameters:
+//   - key: the key of the object to retrieve.
+//
+// Returns:
+//   - data: the retrieved object data.
+//   - err: an error if the retrieval fails.
 func (r *PartsReader) Get(key string) ([]byte, error) {
 
 	// Get from cache

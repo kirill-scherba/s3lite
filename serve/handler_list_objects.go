@@ -12,20 +12,20 @@ import (
 	"github.com/kirill-scherba/s3lite"
 )
 
+// ListBucketResultV2 — the root element for the ListObjectsV2 response
 type ListBucketResultV2 struct {
 	XMLName               xml.Name       `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResult"`
-	Name                  string         `xml:"Name"`                     // Bucket name
-	Prefix                string         `xml:"Prefix"`                   // Filter (prefix)
-	Delimiter             string         `xml:"Delimiter"`                // Filter (delimiter)
-	KeyCount              int            `xml:"KeyCount"`                 // Number of objects in response
-	MaxKeys               int            `xml:"MaxKeys"`                  // Limit
-	IsTruncated           bool           `xml:"IsTruncated"`              // Is there another page?
-	Contents              []Object       `xml:"Contents"`                 // List of files
-	CommonPrefixes        []CommonPrefix `xml:"CommonPrefixes,omitempty"` // Folders
-	ContinuationToken     string         `xml:"ContinuationToken,omitempty"`
-	NextContinuationToken string         `xml:"NextContinuationToken,omitempty"`
+	Name                  string         `xml:"Name"`                            // Bucket name
+	Prefix                string         `xml:"Prefix"`                          // Filter (prefix)
+	Delimiter             string         `xml:"Delimiter"`                       // Filter (delimiter)
+	KeyCount              int            `xml:"KeyCount"`                        // Number of objects in response
+	MaxKeys               int            `xml:"MaxKeys"`                         // Limit
+	IsTruncated           bool           `xml:"IsTruncated"`                     // Is there another page?
+	Contents              []Object       `xml:"Contents"`                        // List of files
+	CommonPrefixes        []CommonPrefix `xml:"CommonPrefixes,omitempty"`        // Folders
+	ContinuationToken     string         `xml:"ContinuationToken,omitempty"`     // Continuation token
+	NextContinuationToken string         `xml:"NextContinuationToken,omitempty"` // Continuation token
 }
-
 type Object struct {
 	Key          string `xml:"Key"`          // File path
 	LastModified S3Time `xml:"LastModified"` // Last modified date
@@ -33,11 +33,24 @@ type Object struct {
 	Size         int64  `xml:"Size"`         // Size in bytes
 	StorageClass string `xml:"StorageClass"` // Default is "STANDARD"
 }
-
 type CommonPrefix struct {
 	Prefix string `xml:"Prefix"`
 }
 
+// listObjectsHandler is a handler for GET /bucket requests. It returns a list of all objects in the specified bucket.
+// The handler takes several parameters: "prefix", "delimiter", "max-keys", and "pretty".
+// "prefix" is a filter parameter that limits the list of objects to those with keys
+// starting with the specified prefix. "delimiter" is a filter parameter that limits the
+// list of objects to those with keys ending with the specified delimiter.
+// If the delimiter is an empty string, the handler will list all objects in the bucket,
+// without filtering by prefix.
+// "max-keys" is a parameter that limits the number of objects returned in the response.
+// If the parameter is set to 0, the handler will return all objects in the bucket.
+// "pretty" is a parameter that formats the XML response with indentation and line breaks.
+// If the parameter is set to "true", the handler will format the XML response with indentation and line breaks.
+// Otherwise, the handler will format the XML response with no indentation or line breaks.
+// The handler returns an error if the specified bucket does not exist, or if the specified parameters are invalid.
+// The handler logs the request, gets the list of objects from S3Lite, and writes the list to the HTTP response writer in XML format.
 func (s *Server) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Log request
@@ -161,6 +174,10 @@ func (s *Server) listObjectsHandler(w http.ResponseWriter, r *http.Request) {
 	xmlEncode(w, pretty, resp)
 }
 
+// xmlEncode writes the given response to the HTTP response writer in XML format.
+// If pretty is true, the XML response will be formatted with indentation and line breaks.
+// Otherwise, the XML response will be formatted with no indentation or line breaks.
+// The function returns an error if the XML encoding fails.
 func xmlEncode(w http.ResponseWriter, pretty bool, resp any) error {
 
 	// Write the XML header manually to avoid potential problems
@@ -177,6 +194,9 @@ func xmlEncode(w http.ResponseWriter, pretty bool, resp any) error {
 	return enc.Encode(resp)
 }
 
+// removeKeysMap removes all keys from the given map from the S3Lite storage.
+// The function takes a pointer to the S3Lite object and a map of keys to delete.
+// It returns an error if any of the keys do not exist in the S3Lite storage.
 func removeKeysMap(s3Lite *s3lite.S3Lite, keysMap map[string]struct{}) (err error) {
 	var keys []string
 	for key := range keysMap {

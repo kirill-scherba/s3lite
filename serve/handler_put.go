@@ -16,7 +16,16 @@ import (
 	"github.com/kirill-scherba/s3lite"
 )
 
-// PUT /bucket/key
+// Part represents a part of a multipart upload.
+type Part struct {
+	PartNumber int    `xml:"PartNumber"`
+	ETag       string `xml:"ETag"`
+}
+
+// putObjectHandler is a handler for PUT /bucket/key requests. It processes
+// multipart upload initialization and completion, and handles normal PUT
+// requests. It returns an error if the specified bucket does not exist,
+// or if the specified key does not exist.
 func (s *Server) putObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Process error at return
@@ -140,7 +149,7 @@ func (s *Server) putObjectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prepare objectInfo and copy metodata
+	// Prepare objectInfo and copy metadata
 	var info = &s3lite.ObjectInfo{Metadata: map[string]string{}}
 	if uploadId != "" && partNumber != "" {
 		info.Metadata["uploadId"] = uploadId
@@ -162,20 +171,12 @@ func (s *Server) putObjectHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func copyPartResult(w http.ResponseWriter, etag string) {
-
-	resp := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-    <CopyPartResult>
-      <LastModified>%s</LastModified>
-      <ETag>"%s"</ETag>
-    </CopyPartResult>`, time.Now().Format(time.RFC3339), etag)
-
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(resp))
-}
-
 // initiateMultipartHandler initiate multipart upload at POST /bucket/key?uploads
+// It will parse the key from the path, get S3Lite object from the bucket,
+// generate a random upload UUID, set the upload ID to the object info,
+// and set the object info back to S3Lite.
+// If the object with the same key already exists, it will use the existing upload ID.
+// At the end, it will send a response with the ETag and status 200.
 func (s *Server) initiateMultipartHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Log request
@@ -224,30 +225,33 @@ func (s *Server) initiateMultipartHandler(w http.ResponseWriter, r *http.Request
 	initiateMultipartUploadResult(w, bucket, key, uploadID)
 }
 
-func initiateMultipartUploadResult(w http.ResponseWriter, bucket, key,
-	uploadID string) {
-
-	resp := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-    <InitiateMultipartUploadResult>
-      <Bucket>%s</Bucket>
-      <Key>%s</Key>
-      <UploadId>%s</UploadId>
-    </InitiateMultipartUploadResult>`, bucket, key, uploadID)
-
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(resp))
-}
-
-type CompleteMultipartUpload struct {
-	Parts []Part `xml:"Part"`
-}
-type Part struct {
-	PartNumber int    `xml:"PartNumber"`
-	ETag       string `xml:"ETag"`
-}
-
-// POST /bucket/key?uploadId=UUID
+// completeMultipartHandler completes a multipart upload by merging all the
+// parts into a single file at POST /bucket/key?uploadId=UUID.
+// It expects a request body with the following XML structure:
+//
+// <CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+//
+//	<Part>
+//	  <PartNumber>1</PartNumber>
+//	  <ETag>"md5-checksum-of-part-1"</ETag>
+//	</Part>
+//	<Part>
+//	  <PartNumber>2</PartNumber>
+//	  <ETag>"md5-checksum-of-part-2"</ETag>
+//	</Part>
+//
+// </CompleteMultipartUploadResult>
+//
+// The response is also in XML format, with the following structure:
+//
+// <CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+//
+//	<Location>http://example.com/bucket/key</Location>
+//	<Bucket>bucket</Bucket>
+//	<Key>key</Key>
+//	<ETag>"md5-checksum-of-final-file-N"</ETag>
+//
+// </CompleteMultipartUploadResult>
 func (s *Server) completeMultipartHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Log request
@@ -264,6 +268,9 @@ func (s *Server) completeMultipartHandler(w http.ResponseWriter, r *http.Request
 	uploadId := r.URL.Query().Get("uploadId")
 
 	// Decode request body
+	type CompleteMultipartUpload struct {
+		Parts []Part `xml:"Part"`
+	}
 	var completeReq CompleteMultipartUpload
 	if err := xml.NewDecoder(r.Body).Decode(&completeReq); err != nil {
 		http.Error(w, "Bad XML", http.StatusBadRequest)
@@ -299,6 +306,15 @@ func (s *Server) completeMultipartHandler(w http.ResponseWriter, r *http.Request
 }
 
 // mergeParts merge parts to single file.
+//
+// This function takes the uploadId, parts and s3Lite bucket name, and merges
+// the parts to a single file. It then saves the merged data to S3Lite with the
+// given key, and returns the object info.
+// The returned object info will have the following additional metadata:
+// - uploadId: the uploadId of the multipart upload.
+// - numParts: the number of parts in the multipart upload.
+// The returned object info will also have the ContentLength set to the sum of the lengths of all the parts.
+// The returned object info will also have the Checksum set to the ETag of the final file in S3 for Multipart, which is usually "hexdigest-checksum-N", where N is the number of parts.
 func (s *Server) mergeParts(uploadId string, parts []Part, bucket, key string) (
 	info *s3lite.ObjectInfo, err error) {
 
@@ -350,6 +366,21 @@ func (s *Server) mergeParts(uploadId string, parts []Part, bucket, key string) (
 	return
 }
 
+// copyPartResult sends a response to the client with the given etag and current
+// time.
+func copyPartResult(w http.ResponseWriter, etag string) {
+
+	resp := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+    <CopyPartResult>
+      <LastModified>%s</LastModified>
+      <ETag>"%s"</ETag>
+    </CopyPartResult>`, time.Now().Format(time.RFC3339), etag)
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(resp))
+}
+
 // calculateMultipartETag calculates Multipart ETag.
 func calculateMultipartETag(parts []Part) string {
 	var combinedBinaryMD5 []byte
@@ -370,6 +401,34 @@ func calculateMultipartETag(parts []Part) string {
 	return fmt.Sprintf(`"%x-%d"`, finalHash, len(parts))
 }
 
+// initiateMultipartUploadResult sends a response to the client with the given
+// bucket name, key and uploadId. It returns a XML response with the given
+// information.
+//
+// The response has the following format:
+// <?xml version="1.0" encoding="UTF-8"?>
+// <InitiateMultipartUploadResult>
+//
+//	<Bucket>[bucket name]</Bucket>
+//	<Key>[key name]</Key>
+//	<UploadId>[uploadId]</UploadId>
+//
+// </InitiateMultipartUploadResult>
+func initiateMultipartUploadResult(w http.ResponseWriter, bucket, key,
+	uploadID string) {
+
+	resp := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+    <InitiateMultipartUploadResult>
+      <Bucket>%s</Bucket>
+      <Key>%s</Key>
+      <UploadId>%s</UploadId>
+    </InitiateMultipartUploadResult>`, bucket, key, uploadID)
+
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(resp))
+}
+
 // parsePath parse path: /bucket/key from request.
 func parsePath(r *http.Request) (bucketName, key string, err error) {
 	// Parse path: /bucket/key
@@ -383,6 +442,11 @@ func parsePath(r *http.Request) (bucketName, key string, err error) {
 	return
 }
 
+// getMetadata returns a map of metadata from the given HTTP header and
+// metadata map. If the metadata map is nil, it creates a new map.
+// It iterates over the HTTP header and adds all headers with the prefix
+// "X-Amz-Meta-" to the metadata map. The keys are lowercased.
+// It returns the populated metadata map.
 func getMetadata(header http.Header, metadata map[string]string) map[string]string {
 
 	if metadata == nil {
@@ -399,6 +463,9 @@ func getMetadata(header http.Header, metadata map[string]string) map[string]stri
 	return metadata
 }
 
+// printMetadata prints all metadata from the given key and metadata map.
+// It prints the key and all metadata in the format "- key: value".
+// It is used to print metadata from HTTP headers and object metadata.
 func printMetadata(key string, metodata map[string]string) {
 
 	// Show all metodata
