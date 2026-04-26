@@ -59,6 +59,35 @@ func (s *S3LiteMulty) connectClient() error {
 	return nil
 }
 
+// tryTakeover attempts to become the server. Returns true if takeover was
+// performed, false if another goroutine is already handling it.
+func (s *S3LiteMulty) tryTakeover() bool {
+	if s.isServer {
+		return false
+	}
+	if !s.takingOver.CompareAndSwap(false, true) {
+		// Another goroutine is already taking over
+		return false
+	}
+
+	// Clean up the client connection
+	s.client.mu.Lock()
+	if s.client.conn != nil {
+		s.client.conn.Close()
+		s.client.conn = nil
+	}
+	s.client.mu.Unlock()
+
+	// Try to become the new server
+	if err := s.becomeServer(); err != nil {
+		log.Printf("multy: failed to become server: %v", err)
+		s.takingOver.Store(false)
+		return false
+	}
+
+	return true
+}
+
 // healthCheckLoop periodically checks if the server connection is alive.
 // If the connection is lost, it tries to become the new server.
 func (s *S3LiteMulty) healthCheckLoop() {
@@ -66,6 +95,9 @@ func (s *S3LiteMulty) healthCheckLoop() {
 	defer ticker.Stop()
 
 	for range ticker.C {
+		if s.isServer {
+			return
+		}
 		s.client.mu.Lock()
 		conn := s.client.conn
 		s.client.mu.Unlock()
@@ -74,24 +106,18 @@ func (s *S3LiteMulty) healthCheckLoop() {
 			return
 		}
 
-		// Try to send a dummy message (a zero-byte write isn't reliable,
-		// but a read with zero timeout can detect closed connections)
+		// Try to detect if connection is dead (read with zero timeout)
 		var zero [1]byte
 		conn.SetReadDeadline(time.Now().Add(1 * time.Millisecond))
-		if _, err := conn.Read(zero[:]); err != nil {
-			// Connection is dead, try to become server
-			log.Printf("multy: server connection lost, trying to become server...")
-
-			s.client.mu.Lock()
-			s.client.conn.Close()
-			s.client.conn = nil
-			s.client.mu.Unlock()
-
-			// Try to become the new server
-			if err := s.becomeServer(); err != nil {
-				log.Printf("multy: failed to become server: %v", err)
-				return
+		_, err := conn.Read(zero[:])
+		if err != nil {
+			// Timeout means connection is alive (no data available), skip
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				conn.SetReadDeadline(time.Time{}) // Reset deadline
+				continue
 			}
+			log.Printf("multy: server connection lost, trying to become server...")
+			s.tryTakeover()
 			return
 		}
 		conn.SetReadDeadline(time.Time{}) // Reset deadline
@@ -132,30 +158,65 @@ func (s *S3LiteMulty) closeClient() {
 }
 
 // sendRequest sends a request to the server and returns the response.
+// If the server connection is lost, it synchronously attempts to take over
+// and become the new server, then executes the request locally.
 func (s *S3LiteMulty) sendRequest(req *Request) (*Response, error) {
 	s.client.mu.Lock()
 	conn := s.client.conn
 	s.client.mu.Unlock()
 
 	if conn == nil {
-		return nil, fmt.Errorf("multy: not connected to server")
+		// Connection already nil — try to become server synchronously
+		return s.tryTakeoverAndExecute(req)
 	}
 
 	// Send request
 	if err := writeRequest(conn, req); err != nil {
-		return nil, fmt.Errorf("multy: write request failed: %w", err)
+		// Write failed — connection lost, try takeover
+		return s.tryTakeoverOnError(req, conn)
 	}
 
 	// Read response
 	resp, err := readResponse(conn)
 	if err != nil {
-		return nil, fmt.Errorf("multy: read response failed: %w", err)
+		// Read failed — connection lost, try takeover
+		return s.tryTakeoverOnError(req, conn)
 	}
 
 	if resp.Err != "" {
 		return resp, fmt.Errorf("%s", resp.Err)
 	}
 
+	return resp, nil
+}
+
+// tryTakeoverOnError cleans up the dead connection, attempts to become
+// the server, and if successful executes the request locally.
+func (s *S3LiteMulty) tryTakeoverOnError(req *Request, deadConn net.Conn) (*Response, error) {
+	// Clean up dead connection
+	s.client.mu.Lock()
+	if s.client.conn == deadConn {
+		deadConn.Close()
+		s.client.conn = nil
+	}
+	s.client.mu.Unlock()
+
+	return s.tryTakeoverAndExecute(req)
+}
+
+// tryTakeoverAndExecute tries to become the server and executes the request
+// locally if takeover succeeds.
+func (s *S3LiteMulty) tryTakeoverAndExecute(req *Request) (*Response, error) {
+	// Try to become the new server
+	if !s.tryTakeover() {
+		return nil, fmt.Errorf("multy: not connected to server")
+	}
+
+	// Execute the request locally
+	resp := s.executeRequest(req)
+	if resp.Err != "" {
+		return resp, fmt.Errorf("%s", resp.Err)
+	}
 	return resp, nil
 }
 

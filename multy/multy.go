@@ -9,6 +9,7 @@ import (
 	"iter"
 	"net"
 	"strings"
+	"sync/atomic"
 
 	"github.com/kirill-scherba/s3lite"
 )
@@ -30,7 +31,8 @@ type S3LiteMulty struct {
 	listener net.Listener
 
 	// Client mode fields
-	client *clientConn
+	client    *clientConn
+	takingOver atomic.Bool // prevents concurrent takeover attempts
 }
 
 // compile-time check that S3LiteMulty implements KeyValueStore.
