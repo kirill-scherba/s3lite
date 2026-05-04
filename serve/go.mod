@@ -2,6 +2,8 @@ module github.com/kirill-scherba/s3lite/serve
 
 go 1.26.1
 
+replace github.com/kirill-scherba/s3lite => ../
+
 require (
 	github.com/google/uuid v1.6.0
 	github.com/kirill-scherba/log v0.0.2
