@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/google/uuid v1.6.0
 	github.com/kirill-scherba/log v0.0.2
-	github.com/kirill-scherba/s3lite v0.0.1
+	github.com/kirill-scherba/s3lite v0.1.0
 	github.com/minio/minio-go/v7 v7.0.99
 	golang.org/x/crypto v0.48.0
 )
